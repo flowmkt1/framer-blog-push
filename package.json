@@ -1,0 +1,12 @@
+{
+  "name": "framer-blog-push",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "framer-api": "latest"
+  }
+}
