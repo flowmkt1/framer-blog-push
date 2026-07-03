@@ -39,14 +39,25 @@ function buildValue(field, raw) {
   }
 }
 
-// 발행 메서드 이름이 문서상 불확실 → 후보를 순서대로 시도(있는 것만 실행)
+// 발행: framer.publish()로 새 버전 발행 후, framer.deploy(id)로 프로덕션(라이브) 승격.
+// AUTO_PUBLISH 환경변수가 "false"면 건너뜀(기본 켜짐).
 async function tryPublish(framer) {
-  for (const m of ["publish", "publishProject", "publishSite"]) {
-    if (typeof framer[m] === "function") {
-      try { await framer[m](); return m; } catch (e) { console.warn(`publish(${m}) 실패:`, e?.message); }
-    }
+  if (String(process.env.AUTO_PUBLISH || "true").toLowerCase() === "false") {
+    return { skipped: "AUTO_PUBLISH=false" };
   }
-  return null;
+  try {
+    if (typeof framer.publish !== "function") return { error: "framer.publish() 없음" };
+    const result = await framer.publish();
+    let deployed = null, deployErr = null;
+    const depId = result?.deployment?.id || result?.deploymentId || result?.id;
+    if (depId && typeof framer.deploy === "function") {
+      try { deployed = await framer.deploy(depId); }
+      catch (e) { deployErr = String(e?.message || e); }
+    }
+    return { published: true, deploymentId: depId || null, deployed: !!deployed, deployErr };
+  } catch (e) {
+    return { error: String(e?.message || e) };
+  }
 }
 
 app.post("/push", async (req, res) => {
