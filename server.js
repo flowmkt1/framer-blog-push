@@ -45,19 +45,28 @@ async function tryPublish(framer) {
   if (String(process.env.AUTO_PUBLISH || "true").toLowerCase() === "false") {
     return { skipped: "AUTO_PUBLISH=false" };
   }
-  try {
-    if (typeof framer.publish !== "function") return { error: "framer.publish() 없음" };
-    const result = await framer.publish();
-    let deployed = null, deployErr = null;
-    const depId = result?.deployment?.id || result?.deploymentId || result?.id;
-    if (depId && typeof framer.deploy === "function") {
-      try { deployed = await framer.deploy(depId); }
-      catch (e) { deployErr = String(e?.message || e); }
+  if (typeof framer.publish !== "function") return { error: "framer.publish() 없음" };
+  // publish()는 가끔 일시적 빌드 오류("ensureComponentsInLoader: Some modules are missing" 등)로
+  // 실패한다 → 지수적 대기로 재시도. 한 번만 성공하면 CMS의 밀린 글이 전부 라이브로 flush됨.
+  const MAX_TRIES = 4;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+    try {
+      const result = await framer.publish();
+      let deployed = null, deployErr = null;
+      const depId = result?.deployment?.id || result?.deploymentId || result?.id;
+      if (depId && typeof framer.deploy === "function") {
+        try { deployed = await framer.deploy(depId); }
+        catch (e) { deployErr = String(e?.message || e); }
+      }
+      return { published: true, tries: attempt, deploymentId: depId || null, deployed: !!deployed, deployErr };
+    } catch (e) {
+      lastErr = String(e?.message || e);
+      console.warn(`[publish] 시도 ${attempt}/${MAX_TRIES} 실패: ${lastErr}`);
+      if (attempt < MAX_TRIES) await new Promise((r) => setTimeout(r, attempt * 7000));
     }
-    return { published: true, deploymentId: depId || null, deployed: !!deployed, deployErr };
-  } catch (e) {
-    return { error: String(e?.message || e) };
   }
+  return { error: lastErr, triedTimes: MAX_TRIES };
 }
 
 app.post("/push", async (req, res) => {
