@@ -107,6 +107,14 @@ app.post("/push", async (req, res) => {
           const v = buildValue(f, p[key]);
           if (v !== undefined) fieldData[f.id] = v;
         }
+        // 별도 "slug" 텍스트 필드(WP 이전 컬렉션에 존재)에도 URL slug와 동일 값을 자동 기입.
+        // FIELD_MAP엔 없지만 이름이 slug인 필드가 있으면 비어있을 때 채운다.
+        for (const f of fields) {
+          if (/^slug$/i.test(f.name) && fieldData[f.id] === undefined) {
+            const v = buildValue(f, slug);
+            if (v !== undefined) fieldData[f.id] = v;
+          }
+        }
         toAdd.push({ slug, fieldData });
         existingSlugs.add(slug);
       }
@@ -121,6 +129,46 @@ app.post("/push", async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// 진단(read-only): blog 컬렉션 필드 목록 + 샘플 아이템의 채워진 필드 확인.
+// 예: GET /fields?secret=<PUSH_SECRET>
+app.get("/fields", async (req, res) => {
+  try {
+    if (PUSH_SECRET && req.query.secret !== PUSH_SECRET) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    const framer = await connect(PROJECT_URL, API_KEY);
+    try {
+      const collections = await framer.getCollections();
+      const collection = collections.find(
+        (c) => (c.name || "").toLowerCase() === COLLECTION_NAME.toLowerCase()
+      );
+      if (!collection) throw new Error(`컬렉션 "${COLLECTION_NAME}" 없음`);
+      const fields = await collection.getFields();
+      const items = await collection.getItems();
+      const byId = new Map(fields.map((f) => [f.id, f]));
+      const sample = items[0];
+      const sampleFieldData = sample
+        ? Object.entries(sample.fieldData || {}).map(([id, v]) => ({
+            name: (byId.get(id) || {}).name,
+            type: v?.type,
+            value: typeof v?.value === "string" ? v.value.slice(0, 60) : v?.value,
+          }))
+        : [];
+      res.json({
+        collection: collection.name,
+        itemCount: items.length,
+        fields: fields.map((f) => ({ name: f.name, type: f.type })),
+        sampleSlug: sample?.slug,
+        sampleFieldData,
+      });
+    } finally {
+      await framer.disconnect();
+    }
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
   }
 });
 
