@@ -7,10 +7,24 @@ import { connect } from "framer-api";
 const app = express();
 app.use(express.json({ limit: "4mb" }));
 
-const PROJECT_URL = process.env.FRAMER_PROJECT_URL;      // 예: https://framer.com/projects/xxxxxxxx
+const PROJECT_URL = process.env.FRAMER_PROJECT_URL;      // JP: https://framer.com/projects/xxxxxxxx
 const API_KEY = process.env.FRAMER_API_KEY;              // Site Settings → General에서 발급
 const PUSH_SECRET = process.env.PUSH_SECRET || "";       // n8n과 공유하는 비밀값(헤더 x-push-secret)
 const COLLECTION_NAME = process.env.FRAMER_COLLECTION || "blog";
+
+// 멀티사이트: 요청 헤더 x-site(jp|en) 또는 ?site= 로 프로젝트/키/컬렉션 선택. 기본 jp(기존 호환).
+function siteConfig(req) {
+  const site = String((req.headers && req.headers["x-site"]) || (req.query && req.query.site) || "jp").toLowerCase();
+  if (site === "en") {
+    return {
+      site: "en",
+      projectUrl: process.env.FRAMER_PROJECT_URL_EN,
+      apiKey: process.env.FRAMER_API_KEY_EN,
+      collection: process.env.FRAMER_COLLECTION_EN || "blog",
+    };
+  }
+  return { site: "jp", projectUrl: PROJECT_URL, apiKey: API_KEY, collection: COLLECTION_NAME };
+}
 
 // 피드 키 → blog 필드 "이름" 매핑 (blog 필드명이 다르면 여기만 수정)
 const FIELD_MAP = {
@@ -79,20 +93,21 @@ app.post("/push", async (req, res) => {
     if (PUSH_SECRET && req.headers["x-push-secret"] !== PUSH_SECRET) {
       return res.status(401).json({ error: "unauthorized" });
     }
-    if (!PROJECT_URL || !API_KEY) {
-      return res.status(500).json({ error: "FRAMER_PROJECT_URL / FRAMER_API_KEY 미설정" });
+    const cfg = siteConfig(req);
+    if (!cfg.projectUrl || !cfg.apiKey) {
+      return res.status(500).json({ error: `FRAMER_PROJECT_URL / FRAMER_API_KEY 미설정 (site=${cfg.site})` });
     }
 
     const body = req.body;
     const posts = Array.isArray(body) ? body : (body?.posts ?? [body]);
 
-    const framer = await connect(PROJECT_URL, API_KEY);
+    const framer = await connect(cfg.projectUrl, cfg.apiKey);
     try {
       const collections = await framer.getCollections();
       const collection = collections.find(
-        (c) => (c.name || "").toLowerCase() === COLLECTION_NAME.toLowerCase()
+        (c) => (c.name || "").toLowerCase() === cfg.collection.toLowerCase()
       );
-      if (!collection) throw new Error(`컬렉션 "${COLLECTION_NAME}" 를 찾지 못함. 있는 것: ${collections.map(c=>c.name).join(", ")}`);
+      if (!collection) throw new Error(`컬렉션 "${cfg.collection}" (site=${cfg.site}) 를 찾지 못함. 있는 것: ${collections.map(c=>c.name).join(", ")}`);
 
       const fields = await collection.getFields();
       const fieldByName = new Map(fields.map((f) => [f.name, f]));
@@ -129,7 +144,7 @@ app.post("/push", async (req, res) => {
       if (toAdd.length) await collection.addItems(toAdd);
       const published = toAdd.length ? await tryPublish(framer) : null;
 
-      res.json({ ok: true, added: toAdd.length, skipped, published });
+      res.json({ ok: true, site: cfg.site, collection: collection.name, added: toAdd.length, skipped, published });
     } finally {
       await framer.disconnect();
     }
@@ -146,13 +161,17 @@ app.get("/fields", async (req, res) => {
     if (PUSH_SECRET && req.query.secret !== PUSH_SECRET) {
       return res.status(401).json({ error: "unauthorized" });
     }
-    const framer = await connect(PROJECT_URL, API_KEY);
+    const cfg = siteConfig(req);
+    if (!cfg.projectUrl || !cfg.apiKey) {
+      return res.status(500).json({ error: `FRAMER env 미설정 (site=${cfg.site})` });
+    }
+    const framer = await connect(cfg.projectUrl, cfg.apiKey);
     try {
       const collections = await framer.getCollections();
       const collection = collections.find(
-        (c) => (c.name || "").toLowerCase() === COLLECTION_NAME.toLowerCase()
+        (c) => (c.name || "").toLowerCase() === cfg.collection.toLowerCase()
       );
-      if (!collection) throw new Error(`컬렉션 "${COLLECTION_NAME}" 없음`);
+      if (!collection) throw new Error(`컬렉션 "${cfg.collection}" (site=${cfg.site}) 없음. 있는 것: ${collections.map(c=>c.name).join(", ")}`);
       const fields = await collection.getFields();
       const items = await collection.getItems();
       const byId = new Map(fields.map((f) => [f.id, f]));
@@ -168,6 +187,7 @@ app.get("/fields", async (req, res) => {
           }))
         : [];
       res.json({
+        site: cfg.site,
         collection: collection.name,
         itemCount: items.length,
         fields: fields.map((f) => ({ name: f.name, type: f.type })),
