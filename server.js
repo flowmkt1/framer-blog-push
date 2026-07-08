@@ -23,7 +23,7 @@ const FIELD_MAP = {
   status: "Status",
 };
 
-function buildValue(field, raw) {
+function buildValue(field, raw, alt) {
   if (raw === undefined || raw === null || raw === "") return undefined;
   switch (field.type) {
     case "enum": {
@@ -32,7 +32,12 @@ function buildValue(field, raw) {
       if (!hit) { console.warn(`[warn] enum case 없음: "${raw}" (필드 ${field.name})`); return undefined; }
       return { type: "enum", value: hit.id };
     }
-    case "image": return { type: "image", value: String(raw) };
+    case "image": {
+      // Framer 이미지 필드: value=URL, alt=대체텍스트(SEO·접근성). alt 없으면 생략.
+      const v = { type: "image", value: String(raw) };
+      if (alt) v.alt = String(alt);
+      return v;
+    }
     case "date": return { type: "date", value: String(raw) };
     case "formattedText": return { type: "formattedText", value: String(raw) };
     default: return { type: "string", value: String(raw) };
@@ -101,10 +106,12 @@ app.post("/push", async (req, res) => {
         if (!slug) { skipped.push(`(no slug) ${p.title || ""}`); continue; }
         if (existingSlugs.has(slug)) { skipped.push(`(dup) ${slug}`); continue; }
         const fieldData = {};
+        // thumbnail(image) 필드엔 alt 텍스트로 기사 제목을 넣는다(SEO·접근성). 제목 없으면 slug.
+        const altText = String(p.title || slug || "").trim();
         for (const key of Object.keys(FIELD_MAP)) {
           const f = fieldByName.get(FIELD_MAP[key]);
           if (!f) continue;
-          const v = buildValue(f, p[key]);
+          const v = buildValue(f, p[key], key === "thumbnail" ? altText : undefined);
           if (v !== undefined) fieldData[f.id] = v;
         }
         // 별도 "slug" 텍스트 필드(WP 이전 컬렉션에 존재)에도 URL slug와 동일 값을 자동 기입.
@@ -149,12 +156,15 @@ app.get("/fields", async (req, res) => {
       const fields = await collection.getFields();
       const items = await collection.getItems();
       const byId = new Map(fields.map((f) => [f.id, f]));
-      const sample = items[0];
+      // ?slug=x 지정 시 해당 아이템, 없으면 첫 아이템을 샘플로.
+      const wantSlug = String(req.query.slug || "").trim();
+      const sample = wantSlug ? items.find((i) => i.slug === wantSlug) : items[0];
       const sampleFieldData = sample
         ? Object.entries(sample.fieldData || {}).map(([id, v]) => ({
             name: (byId.get(id) || {}).name,
             type: v?.type,
             value: typeof v?.value === "string" ? v.value.slice(0, 60) : v?.value,
+            alt: v?.alt,
           }))
         : [];
       res.json({
