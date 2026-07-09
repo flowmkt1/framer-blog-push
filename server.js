@@ -178,6 +178,11 @@ app.get("/fields", async (req, res) => {
       const fields = await collection.getFields();
       const items = await collection.getItems();
       const byId = new Map(fields.map((f) => [f.id, f]));
+      // 진단: category 필드의 고유값 목록(자동 카테고리 지정용).
+      const catField = fields.find((f) => (f.name || "").toLowerCase() === "category");
+      const distinctCategories = catField
+        ? [...new Set(items.map((i) => (i.fieldData && i.fieldData[catField.id] && i.fieldData[catField.id].value) || "").filter(Boolean))].slice(0, 50)
+        : [];
       // ?slug=x 지정 시 해당 아이템, 없으면 첫 아이템을 샘플로.
       const wantSlug = String(req.query.slug || "").trim();
       const sample = wantSlug ? items.find((i) => i.slug === wantSlug) : items[0];
@@ -194,6 +199,7 @@ app.get("/fields", async (req, res) => {
         collection: collection.name,
         itemCount: items.length,
         fields: fields.map((f) => ({ name: f.name, type: f.type })),
+        distinctCategories,
         sampleSlug: sample?.slug,
         sampleFieldData,
       });
