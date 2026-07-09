@@ -162,6 +162,9 @@ app.get("/fields", async (req, res) => {
       return res.status(401).json({ error: "unauthorized" });
     }
     const cfg = siteConfig(req);
+    // 진단용: ?projecturl= / ?collection= 로 임시 오버라이드(URL 형식 테스트).
+    if (req.query.projecturl) cfg.projectUrl = String(req.query.projecturl);
+    if (req.query.collection) cfg.collection = String(req.query.collection);
     if (!cfg.projectUrl || !cfg.apiKey) {
       return res.status(500).json({ error: `FRAMER env 미설정 (site=${cfg.site})` });
     }
